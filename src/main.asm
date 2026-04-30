@@ -1,0 +1,1231 @@
+.MODEL SMALL
+
+.STACK 100H
+
+.DATA
+
+; =============================================================================
+; DATA SEGMENT - Global Data Structures
+; =============================================================================
+
+; User credentials for authentication
+ADMIN_USERNAME DB 'admin$'
+ADMIN_PASSWORD DB 'admin123$'
+AGENT_USERNAME DB 'agent$'
+AGENT_PASSWORD DB 'agent123$'
+
+; User roles
+ROLE_ADMIN EQU 1
+ROLE_AGENT EQU 2
+
+; Server node status codes
+STATUS_OFFLINE EQU 0
+STATUS_ONLINE EQU 1
+
+; Current user information
+CURRENT_USER_ROLE DB 0              ; 0=None, 1=Admin, 2=Agent
+CURRENT_USER_NAME DB 20 DUP(0)      ; Store current username
+
+; Server rack array (10 servers, 1=Online, 0=Offline)
+SERVER_NODES DB 10 DUP(0)           ; Status of each server node
+
+; Server information records
+SERVER_COMPANY_NAMES DB 600 DUP(0)  ; 10 * 60 bytes
+SERVER_DOMAINS DB 600 DUP(0)        ; 10 * 60 bytes
+SERVER_HOURS_USED DB 10 DUP(0)      ; Hours used by each server
+SERVER_START_TIME DB 10 DUP(0)      ; Start time for billing
+
+; Billing rate (per hour)
+COMPUTE_RATE DB 50                  ; $50 per hour
+
+; Decommission history stack
+DECOMMISSION_STACK DB 100 DUP(0)   ; Stack stores node IDs
+STACK_PTR DB 0                      ; Stack pointer
+
+; Input buffers
+INPUT_BUFFER DB 21, 0, 20 DUP(0)   ; For various inputs
+USERNAME_INPUT DB 21, 0, 20 DUP(0) ; Username input
+PASSWORD_INPUT DB 21, 0, 20 DUP(0) ; Password input
+COMPANY_NAME_INPUT DB 61, 0, 60 DUP(0) ; Company name
+DOMAIN_NAME_INPUT DB 61, 0, 60 DUP(0)  ; Domain name
+SEARCH_INPUT DB 21, 0, 20 DUP(0)   ; Search query
+
+; Messages and strings
+MSG_MAIN_MENU DB 0Dh, 0Ah, "======================================", 0Dh, 0Ah
+              DB "  Cloud Data Center Management System  ", 0Dh, 0Ah
+              DB "======================================", 0Dh, 0Ah
+              DB "1. Login", 0Dh, 0Ah
+              DB "2. Allocate Server Node", 0Dh, 0Ah
+              DB "3. Search Node", 0Dh, 0Ah
+              DB "4. Decommission Node (Billing)", 0Dh, 0Ah
+              DB "5. Decommission History", 0Dh, 0Ah
+              DB "6. Exit", 0Dh, 0Ah
+              DB "Select option (1-6): $"
+
+MSG_LOGIN_WELCOME DB 0Dh, 0Ah, "=== LOGIN ===", 0Dh, 0Ah, "$"
+MSG_ENTER_USERNAME DB "Enter username: $"
+MSG_ENTER_PASSWORD DB "Enter password: $"
+MSG_LOGIN_SUCCESS DB 0Dh, 0Ah, "Login successful! Role: $"
+MSG_LOGIN_FAILED DB 0Dh, 0Ah, "Login failed! Invalid credentials.", 0Dh, 0Ah, "$"
+MSG_ALREADY_LOGGED_IN DB "Already logged in. Logout first.", 0Dh, 0Ah, "$"
+
+MSG_ALLOCATE_MENU DB 0Dh, 0Ah, "=== SERVER NODE ALLOCATION ===", 0Dh, 0Ah, "$"
+MSG_ENTER_COMPANY_NAME DB "Enter company name: $"
+MSG_ENTER_DOMAIN_NAME DB "Enter domain name (www.domain.com): $"
+MSG_NODE_ALLOCATED DB "Server node allocated! Node ID: $"
+MSG_NO_AVAILABLE_NODES DB "Error: No available server nodes!", 0Dh, 0Ah, "$"
+MSG_AGENT_ONLY DB "Error: Only agents can allocate nodes!", 0Dh, 0Ah, "$"
+
+MSG_SEARCH_MENU DB 0Dh, 0Ah, "=== SEARCH NODE ===", 0Dh, 0Ah, "$"
+MSG_ENTER_SEARCH_QUERY DB "Enter company name or node ID: $"
+MSG_NODE_STATUS DB "Node ID: $"
+MSG_NODE_RUNNING DB "Status: Running", 0Dh, 0Ah, "$"
+MSG_NODE_OFFLINE DB "Status: Offline", 0Dh, 0Ah, "$"
+MSG_NODE_NOT_FOUND DB "Node not found!", 0Dh, 0Ah, "$"
+MSG_RACK_HEALTH DB 0Dh, 0Ah, "Data Center Health: $"
+MSG_ACTIVE_NODES DB " nodes active, $"
+MSG_AVAILABLE_NODES DB " nodes available.", 0Dh, 0Ah, "$"
+
+MSG_DECOMMISSION_MENU DB 0Dh, 0Ah, "=== NODE DECOMMISSIONING & BILLING ===", 0Dh, 0Ah, "$"
+MSG_ENTER_NODE_ID DB "Enter node ID to decommission (0-9): $"
+MSG_ENTER_HOURS_USED DB "Enter hours used: $"
+MSG_INVOICE_HEADER DB "======= BILLING INVOICE =======", 0Dh, 0Ah, "$"
+MSG_COMPANY_BILL DB "Company: $"
+MSG_HOURS_BILL DB "Hours: $"
+MSG_RATE_BILL DB "Rate per hour: $"
+MSG_TOTAL_BILL DB "Total Cost: $", 0Dh, 0Ah, "$"
+MSG_NODE_FREED DB "Server node freed and added to history.", 0Dh, 0Ah, "$"
+MSG_ADMIN_ONLY DB "Error: Only admins can decommission nodes!", 0Dh, 0Ah, "$"
+
+MSG_HISTORY_MENU DB 0Dh, 0Ah, "=== DECOMMISSION HISTORY ===", 0Dh, 0Ah, "$"
+MSG_NO_HISTORY DB "No decommissioned nodes in history.", 0Dh, 0Ah, "$"
+MSG_HISTORY_HEADER DB "Recently decommissioned nodes (LIFO order):", 0Dh, 0Ah, "$"
+MSG_HISTORY_ENTRY DB "Node ID: $"
+
+MSG_INVALID_CHOICE DB "Invalid choice. Please try again.", 0Dh, 0Ah, "$"
+MSG_GOODBYE DB 0Dh, 0Ah, "Thank you for using Cloud Data Center. Goodbye!", 0Dh, 0Ah, "$"
+
+MSG_NEWLINE DB 0Dh, 0Ah, "$"
+MSG_SPACE DB " $"
+MSG_ADMIN_ROLE DB "Administrator", 0Dh, 0Ah, "$"
+MSG_AGENT_ROLE DB "Client Agent", 0Dh, 0Ah, "$"
+MSG_NOT_LOGGED_IN DB "Error: You must login first!", 0Dh, 0Ah, "$"
+
+BILLING_RESULT DW 0
+MSG_HOURS_UNIT DB "hours", 0Dh, 0Ah, "$"
+MSG_PER_HOUR DB "/hour", 0Dh, 0Ah, "$"
+MSG_INVALID_NODE_ID DB "Invalid node ID!", 0Dh, 0Ah, "$"
+MSG_NODE_NOT_ONLINE DB "Node is not online!", 0Dh, 0Ah, "$"
+
+.CODE
+
+; =============================================================================
+; UTILITY MODULE - String and Math Operations
+; =============================================================================
+
+PRINT_STRING PROC
+    MOV AH, 09h
+    INT 21h
+    RET
+PRINT_STRING ENDP
+
+PRINT_CHAR PROC
+    MOV DL, AL
+    MOV AH, 02h
+    INT 21h
+    RET
+PRINT_CHAR ENDP
+
+PRINT_NUMBER PROC
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    MOV BX, 10
+    MOV CX, 0
+
+COUNT_DIGITS:
+    XOR DX, DX
+    DIV BX
+    PUSH DX
+    INC CX
+    CMP AX, 0
+    JNE COUNT_DIGITS
+
+PRINT_DIGITS:
+    POP AX
+    ADD AL, '0'
+    CALL PRINT_CHAR
+    LOOP PRINT_DIGITS
+
+    POP DX
+    POP CX
+    POP BX
+    RET
+PRINT_NUMBER ENDP
+
+READ_STRING PROC
+    MOV AH, 0Ah
+    INT 21h
+    RET
+READ_STRING ENDP
+
+STRING_COMPARE PROC
+    PUSH BX
+    XOR AX, AX
+
+COMPARE_LOOP:
+    MOV AL, [SI]
+    MOV BL, [DI]
+    CMP AL, BL
+    JNE COMPARE_NOT_EQUAL
+    CMP AL, 0
+    JE COMPARE_EQUAL
+    CMP AL, '$'
+    JE COMPARE_EQUAL
+    INC SI
+    INC DI
+    JMP COMPARE_LOOP
+
+COMPARE_EQUAL:
+    XOR AX, AX
+    JMP COMPARE_END
+
+COMPARE_NOT_EQUAL:
+    MOV AX, 1
+
+COMPARE_END:
+    POP BX
+    RET
+STRING_COMPARE ENDP
+
+STRING_LENGTH PROC
+    PUSH SI
+    XOR AX, AX
+
+LENGTH_LOOP:
+    MOV BL, [SI]
+    CMP BL, 0
+    JE LENGTH_END
+    CMP BL, '$'
+    JE LENGTH_END
+    INC AX
+    INC SI
+    JMP LENGTH_LOOP
+
+LENGTH_END:
+    POP SI
+    RET
+STRING_LENGTH ENDP
+
+STRING_COPY PROC
+    PUSH AX
+
+COPY_LOOP:
+    MOV AL, [SI]
+    MOV [DI], AL
+    CMP AL, 0
+    JE COPY_END
+    CMP AL, '$'
+    JE COPY_END
+    INC SI
+    INC DI
+    JMP COPY_LOOP
+
+COPY_END:
+    POP AX
+    RET
+STRING_COPY ENDP
+
+CLEAR_BUFFER PROC
+    PUSH AX
+    XOR AL, AL
+
+CLEAR_LOOP:
+    MOV [DI], AL
+    INC DI
+    LOOP CLEAR_LOOP
+
+    POP AX
+    RET
+CLEAR_BUFFER ENDP
+
+FIND_CHAR_IN_STRING PROC
+    PUSH AX
+    XOR BX, BX
+
+FIND_LOOP:
+    MOV CL, [SI]
+    CMP CL, AL
+    JE CHAR_FOUND
+    CMP CL, 0
+    JE CHAR_NOT_FOUND
+    CMP CL, '$'
+    JE CHAR_NOT_FOUND
+    INC BX
+    INC SI
+    JMP FIND_LOOP
+
+CHAR_FOUND:
+    POP AX
+    RET
+
+CHAR_NOT_FOUND:
+    MOV BX, -1
+    POP AX
+    RET
+FIND_CHAR_IN_STRING ENDP
+
+; =============================================================================
+; AUTHENTICATION MODULE
+; =============================================================================
+
+AUTH_LOGIN PROC
+    CMP CURRENT_USER_ROLE, 0
+    JNE ALREADY_LOGGED_IN
+
+    LEA DX, MSG_LOGIN_WELCOME
+    CALL PRINT_STRING
+
+    LEA DX, MSG_ENTER_USERNAME
+    CALL PRINT_STRING
+    MOV DX, OFFSET USERNAME_INPUT
+    CALL READ_STRING
+
+    ; Add string terminator after input
+    MOV AL, [USERNAME_INPUT + 1]  ; Get number of chars read
+    MOV BL, AL
+    XOR BH, BH
+    MOV BYTE [USERNAME_INPUT + 2 + BX], '$'  ; Add terminator
+
+    LEA DX, MSG_ENTER_PASSWORD
+    CALL PRINT_STRING
+    MOV DX, OFFSET PASSWORD_INPUT
+    CALL READ_STRING
+
+    ; Add string terminator after input
+    MOV AL, [PASSWORD_INPUT + 1]  ; Get number of chars read
+    MOV BL, AL
+    XOR BH, BH
+    MOV BYTE [PASSWORD_INPUT + 2 + BX], '$'  ; Add terminator
+
+    LEA SI, [USERNAME_INPUT + 2]
+    LEA DI, [PASSWORD_INPUT + 2]
+
+    CALL TRY_ADMIN_LOGIN
+    CMP AX, 1
+    JE ADMIN_LOGIN_SUCCESS
+
+    CALL TRY_AGENT_LOGIN
+    CMP AX, 1
+    JE AGENT_LOGIN_SUCCESS
+
+    LEA DX, MSG_LOGIN_FAILED
+    CALL PRINT_STRING
+    RET
+
+ADMIN_LOGIN_SUCCESS:
+    MOV CURRENT_USER_ROLE, ROLE_ADMIN
+    LEA DX, MSG_LOGIN_SUCCESS
+    CALL PRINT_STRING
+    LEA DX, MSG_ADMIN_ROLE
+    CALL PRINT_STRING
+    RET
+
+AGENT_LOGIN_SUCCESS:
+    MOV CURRENT_USER_ROLE, ROLE_AGENT
+    LEA DX, MSG_LOGIN_SUCCESS
+    CALL PRINT_STRING
+    LEA DX, MSG_AGENT_ROLE
+    CALL PRINT_STRING
+    RET
+
+ALREADY_LOGGED_IN:
+    LEA DX, MSG_ALREADY_LOGGED_IN
+    CALL PRINT_STRING
+    RET
+
+AUTH_LOGIN ENDP
+
+TRY_ADMIN_LOGIN PROC
+    PUSH SI
+    PUSH DI
+
+    LEA DI, ADMIN_USERNAME
+    CALL STRING_COMPARE
+    CMP AX, 0
+    JNE ADMIN_USER_FAIL
+
+    LEA SI, [PASSWORD_INPUT + 2]
+    LEA DI, ADMIN_PASSWORD
+    CALL STRING_COMPARE
+    CMP AX, 0
+    JNE ADMIN_USER_FAIL
+
+    MOV AX, 1
+    JMP ADMIN_LOGIN_END
+
+ADMIN_USER_FAIL:
+    XOR AX, AX
+
+ADMIN_LOGIN_END:
+    POP DI
+    POP SI
+    RET
+TRY_ADMIN_LOGIN ENDP
+
+TRY_AGENT_LOGIN PROC
+    PUSH SI
+    PUSH DI
+
+    LEA DI, AGENT_USERNAME
+    CALL STRING_COMPARE
+    CMP AX, 0
+    JNE AGENT_USER_FAIL
+
+    LEA SI, [PASSWORD_INPUT + 2]
+    LEA DI, AGENT_PASSWORD
+    CALL STRING_COMPARE
+    CMP AX, 0
+    JNE AGENT_USER_FAIL
+
+    MOV AX, 1
+    JMP AGENT_LOGIN_END
+
+AGENT_USER_FAIL:
+    XOR AX, AX
+
+AGENT_LOGIN_END:
+    POP DI
+    POP SI
+    RET
+TRY_AGENT_LOGIN ENDP
+
+CHECK_ROLE PROC
+    CMP CURRENT_USER_ROLE, AL
+    JNE ROLE_CHECK_FAIL
+    MOV AX, 1
+    RET
+
+ROLE_CHECK_FAIL:
+    XOR AX, AX
+    RET
+CHECK_ROLE ENDP
+
+LOGOUT PROC
+    MOV CURRENT_USER_ROLE, 0
+    RET
+LOGOUT ENDP
+
+; =============================================================================
+; ALLOCATION MODULE
+; =============================================================================
+
+ALLOCATE_SERVER_NODE PROC
+    CMP CURRENT_USER_ROLE, 0
+    JE NOT_LOGGED_IN_ALLOC
+
+    MOV AL, ROLE_AGENT
+    CALL CHECK_ROLE
+    CMP AX, 1
+    JNE NOT_AGENT_ALLOC
+
+    LEA DX, MSG_ALLOCATE_MENU
+    CALL PRINT_STRING
+
+    LEA DX, MSG_ENTER_COMPANY_NAME
+    CALL PRINT_STRING
+    MOV DX, OFFSET COMPANY_NAME_INPUT
+    CALL READ_STRING
+
+    LEA DX, MSG_ENTER_DOMAIN_NAME
+    CALL PRINT_STRING
+    MOV DX, OFFSET DOMAIN_NAME_INPUT
+    CALL READ_STRING
+
+    CALL FIND_AVAILABLE_NODE
+    CMP AX, -1
+    JE NO_AVAILABLE_NODES
+
+    MOV BX, AX
+
+    MOV BYTE [SERVER_NODES + BX], STATUS_ONLINE
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV DI, AX
+
+    LEA SI, [COMPANY_NAME_INPUT + 2]
+    CALL STRING_COPY
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV DI, AX
+    ADD DI, OFFSET SERVER_DOMAINS
+    LEA SI, [DOMAIN_NAME_INPUT + 2]
+    CALL STRING_COPY
+
+    LEA DX, MSG_NODE_ALLOCATED
+    CALL PRINT_STRING
+    MOV AL, BL
+    ADD AL, '0'
+    CALL PRINT_CHAR
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+    RET
+
+NOT_LOGGED_IN_ALLOC:
+    LEA DX, MSG_NOT_LOGGED_IN
+    CALL PRINT_STRING
+    RET
+
+NOT_AGENT_ALLOC:
+    LEA DX, MSG_AGENT_ONLY
+    CALL PRINT_STRING
+    RET
+
+NO_AVAILABLE_NODES:
+    LEA DX, MSG_NO_AVAILABLE_NODES
+    CALL PRINT_STRING
+    RET
+
+ALLOCATE_SERVER_NODE ENDP
+
+FIND_AVAILABLE_NODE PROC
+    MOV BX, 0
+    MOV CX, 10
+
+SEARCH_LOOP:
+    MOV AL, [SERVER_NODES + BX]
+    CMP AL, STATUS_OFFLINE
+    JE NODE_FOUND
+
+    INC BX
+    LOOP SEARCH_LOOP
+
+    MOV AX, -1
+    RET
+
+NODE_FOUND:
+    MOV AX, BX
+    RET
+FIND_AVAILABLE_NODE ENDP
+
+COUNT_ACTIVE_NODES PROC
+    XOR AL, AL
+    MOV BX, 0
+    MOV CX, 10
+
+COUNT_LOOP:
+    MOV DL, [SERVER_NODES + BX]
+    CMP DL, STATUS_ONLINE
+    JNE COUNT_SKIP
+    INC AL
+
+COUNT_SKIP:
+    INC BX
+    LOOP COUNT_LOOP
+
+    RET
+COUNT_ACTIVE_NODES ENDP
+
+COUNT_AVAILABLE_NODES PROC
+    XOR AL, AL
+    MOV BX, 0
+    MOV CX, 10
+
+COUNT_AVAIL_LOOP:
+    MOV DL, [SERVER_NODES + BX]
+    CMP DL, STATUS_OFFLINE
+    JNE COUNT_AVAIL_SKIP
+    INC AL
+
+COUNT_AVAIL_SKIP:
+    INC BX
+    LOOP COUNT_AVAIL_LOOP
+
+    RET
+COUNT_AVAILABLE_NODES ENDP
+
+GET_NODE_INFO PROC
+    MOV BX, AX
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV SI, AX
+    ADD SI, OFFSET SERVER_COMPANY_NAMES
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV DI, AX
+    ADD DI, OFFSET SERVER_DOMAINS
+
+    RET
+GET_NODE_INFO ENDP
+
+; =============================================================================
+; INPUT MODULE
+; =============================================================================
+
+READ_DYNAMIC_STRING PROC
+    PUSH AX
+    PUSH BX
+    PUSH DI
+
+    MOV DI, DX
+    XOR BX, BX
+
+READ_CHAR_LOOP:
+    MOV AH, 01h
+    INT 21h
+
+    CMP AL, 0Dh
+    JE END_DYNAMIC_STRING
+
+    CMP BX, 59
+    JGE READ_CHAR_LOOP
+
+    MOV [DI + BX], AL
+    INC BX
+    CALL PRINT_CHAR
+    JMP READ_CHAR_LOOP
+
+END_DYNAMIC_STRING:
+    MOV BYTE [DI + BX], '$'
+    MOV BYTE [DI + BX + 1], 0
+
+    POP DI
+    POP BX
+    POP AX
+    RET
+READ_DYNAMIC_STRING ENDP
+
+; =============================================================================
+; BILLING MODULE
+; =============================================================================
+
+DECOMMISSION_NODE PROC
+    CMP CURRENT_USER_ROLE, 0
+    JE NOT_LOGGED_IN_BILLING
+
+    MOV AL, ROLE_ADMIN
+    CALL CHECK_ROLE
+    CMP AX, 1
+    JNE NOT_ADMIN_BILLING
+
+    LEA DX, MSG_DECOMMISSION_MENU
+    CALL PRINT_STRING
+
+    LEA DX, MSG_ENTER_NODE_ID
+    CALL PRINT_STRING
+    MOV DX, OFFSET INPUT_BUFFER
+    CALL READ_STRING
+
+    MOV AL, [INPUT_BUFFER + 2]
+    SUB AL, '0'
+
+    CMP AL, 0
+    JL INVALID_NODE_ID
+    CMP AL, 9
+    JG INVALID_NODE_ID
+
+    MOV BX, AX
+
+    MOV CL, [SERVER_NODES + BX]
+    CMP CL, STATUS_ONLINE
+    JNE NODE_NOT_ONLINE
+
+    LEA DX, MSG_ENTER_HOURS_USED
+    CALL PRINT_STRING
+    MOV DX, OFFSET INPUT_BUFFER
+    CALL READ_STRING
+
+    MOV AL, [INPUT_BUFFER + 2]
+    SUB AL, '0'
+
+    MOV [SERVER_HOURS_USED + BX], AL
+
+    CALL CALCULATE_BILLING
+
+    CALL DISPLAY_INVOICE
+
+    CALL PUSH_TO_STACK
+
+    MOV BYTE [SERVER_NODES + BX], STATUS_OFFLINE
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV DI, AX
+    ADD DI, OFFSET SERVER_COMPANY_NAMES
+    MOV CX, 60
+    XOR AL, AL
+    CALL CLEAR_BUFFER
+
+    LEA DX, MSG_NODE_FREED
+    CALL PRINT_STRING
+    RET
+
+NOT_LOGGED_IN_BILLING:
+    LEA DX, MSG_NOT_LOGGED_IN
+    CALL PRINT_STRING
+    RET
+
+NOT_ADMIN_BILLING:
+    LEA DX, MSG_ADMIN_ONLY
+    CALL PRINT_STRING
+    RET
+
+INVALID_NODE_ID:
+    LEA DX, MSG_INVALID_NODE_ID
+    CALL PRINT_STRING
+    RET
+
+NODE_NOT_ONLINE:
+    LEA DX, MSG_NODE_NOT_ONLINE
+    CALL PRINT_STRING
+    RET
+
+DECOMMISSION_NODE ENDP
+
+CALCULATE_BILLING PROC
+    PUSH BX
+
+    MOV BL, [COMPUTE_RATE]
+    MUL BL
+
+    MOV [BILLING_RESULT], AX
+
+    POP BX
+    RET
+CALCULATE_BILLING ENDP
+
+DISPLAY_INVOICE PROC
+    PUSH AX
+    PUSH BX
+
+    LEA DX, MSG_INVOICE_HEADER
+    CALL PRINT_STRING
+
+    LEA DX, MSG_COMPANY_BILL
+    CALL PRINT_STRING
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV SI, AX
+    ADD SI, OFFSET SERVER_COMPANY_NAMES
+    CALL DISPLAY_STRING_AT_SI
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    LEA DX, MSG_HOURS_BILL
+    CALL PRINT_STRING
+    MOV AL, [SERVER_HOURS_USED + BX]
+    XOR AH, AH
+    CALL PRINT_NUMBER
+    LEA DX, MSG_SPACE
+    CALL PRINT_STRING
+    LEA DX, MSG_HOURS_UNIT
+    CALL PRINT_STRING
+
+    LEA DX, MSG_RATE_BILL
+    CALL PRINT_STRING
+    MOV AL, [COMPUTE_RATE]
+    XOR AH, AH
+    CALL PRINT_NUMBER
+    LEA DX, MSG_PER_HOUR
+    CALL PRINT_STRING
+
+    LEA DX, MSG_TOTAL_BILL
+    CALL PRINT_STRING
+    MOV AX, [BILLING_RESULT]
+    CALL PRINT_NUMBER
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    POP BX
+    POP AX
+    RET
+DISPLAY_INVOICE ENDP
+
+DISPLAY_STRING_AT_SI PROC
+    PUSH AX
+
+DISPLAY_LOOP:
+    MOV AL, [SI]
+    CMP AL, '$'
+    JE DISPLAY_END
+    CMP AL, 0
+    JE DISPLAY_END
+    CALL PRINT_CHAR
+    INC SI
+    JMP DISPLAY_LOOP
+
+DISPLAY_END:
+    POP AX
+    RET
+DISPLAY_STRING_AT_SI ENDP
+
+PUSH_TO_STACK PROC
+    PUSH AX
+    PUSH BX
+
+    MOV AL, [STACK_PTR]
+
+    CMP AL, 100
+    JGE STACK_FULL
+
+    MOV BH, 0
+    MOV [DECOMMISSION_STACK + BX], BL
+
+    INC AL
+    MOV [STACK_PTR], AL
+
+STACK_FULL:
+    POP BX
+    POP AX
+    RET
+PUSH_TO_STACK ENDP
+
+; =============================================================================
+; SEARCH MODULE
+; =============================================================================
+
+SEARCH_NODE PROC
+    CMP CURRENT_USER_ROLE, 0
+    JE NOT_LOGGED_IN_SEARCH
+
+    LEA DX, MSG_SEARCH_MENU
+    CALL PRINT_STRING
+
+    LEA DX, MSG_ENTER_SEARCH_QUERY
+    CALL PRINT_STRING
+    MOV DX, OFFSET SEARCH_INPUT
+    CALL READ_STRING
+
+    LEA SI, [SEARCH_INPUT + 2]
+
+    MOV AL, [SI]
+    CMP AL, '0'
+    JL SEARCH_BY_NAME
+    CMP AL, '9'
+    JG SEARCH_BY_NAME
+
+    SUB AL, '0'
+    CALL SEARCH_BY_NODE_ID
+    JMP SEARCH_DISPLAY_HEALTH
+
+SEARCH_BY_NAME:
+    CALL SEARCH_BY_COMPANY_NAME
+
+SEARCH_DISPLAY_HEALTH:
+    CALL DISPLAY_RACK_HEALTH
+    RET
+
+NOT_LOGGED_IN_SEARCH:
+    LEA DX, MSG_NOT_LOGGED_IN
+    CALL PRINT_STRING
+    RET
+
+SEARCH_NODE ENDP
+
+SEARCH_BY_NODE_ID PROC
+    PUSH BX
+    PUSH CX
+
+    CMP AL, 0
+    JL SEARCH_ID_INVALID
+    CMP AL, 9
+    JG SEARCH_ID_INVALID
+
+    MOV BX, AX
+
+    LEA DX, MSG_NODE_STATUS
+    CALL PRINT_STRING
+    MOV AL, BL
+    ADD AL, '0'
+    CALL PRINT_CHAR
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    MOV AL, [SERVER_NODES + BX]
+    CMP AL, STATUS_ONLINE
+    JE DISPLAY_RUNNING
+
+    LEA DX, MSG_NODE_OFFLINE
+    CALL PRINT_STRING
+    JMP SEARCH_ID_END
+
+DISPLAY_RUNNING:
+    LEA DX, MSG_NODE_RUNNING
+    CALL PRINT_STRING
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV SI, AX
+    ADD SI, OFFSET SERVER_COMPANY_NAMES
+    CALL DISPLAY_STRING_AT_SI
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    JMP SEARCH_ID_END
+
+SEARCH_ID_INVALID:
+    LEA DX, MSG_NODE_NOT_FOUND
+    CALL PRINT_STRING
+
+SEARCH_ID_END:
+    POP CX
+    POP BX
+    RET
+SEARCH_BY_NODE_ID ENDP
+
+SEARCH_BY_COMPANY_NAME PROC
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH SI
+    PUSH DI
+
+    MOV BX, 0
+    MOV CX, 10
+    XOR AX, AX
+
+SEARCH_COMPANY_LOOP:
+    MOV DL, [SERVER_NODES + BX]
+    CMP DL, STATUS_ONLINE
+    JNE SEARCH_COMPANY_NEXT
+
+    MOV AX, BX
+    MOV CX, 60
+    MUL CX
+    MOV DI, AX
+    ADD DI, OFFSET SERVER_COMPANY_NAMES
+
+    CALL COMPARE_COMPANY_NAMES
+    CMP AX, 0
+    JNE SEARCH_COMPANY_NEXT
+
+    LEA DX, MSG_NODE_STATUS
+    CALL PRINT_STRING
+    MOV AL, BL
+    ADD AL, '0'
+    CALL PRINT_CHAR
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    LEA DX, MSG_NODE_RUNNING
+    CALL PRINT_STRING
+
+    INC AX
+
+SEARCH_COMPANY_NEXT:
+    INC BX
+    MOV CX, 10
+    SUB CX, BX
+    CMP CX, 0
+    JLE SEARCH_COMPANY_END
+    JMP SEARCH_COMPANY_LOOP
+
+    CMP AX, 0
+    JNE SEARCH_COMPANY_END
+    LEA DX, MSG_NODE_NOT_FOUND
+    CALL PRINT_STRING
+
+SEARCH_COMPANY_END:
+    POP DI
+    POP SI
+    POP CX
+    POP BX
+    POP AX
+    RET
+SEARCH_BY_COMPANY_NAME ENDP
+
+COMPARE_COMPANY_NAMES PROC
+    PUSH BX
+
+COMPARE_CO_LOOP:
+    MOV AL, [SI]
+    MOV BL, [DI]
+
+    CMP AL, 'a'
+    JL COMPARE_CO_CHECK_SECOND
+    CMP AL, 'z'
+    JG COMPARE_CO_CHECK_SECOND
+    SUB AL, 32
+
+COMPARE_CO_CHECK_SECOND:
+    CMP BL, 'a'
+    JL COMPARE_CO_DO_COMPARE
+    CMP BL, 'z'
+    JG COMPARE_CO_DO_COMPARE
+    SUB BL, 32
+
+COMPARE_CO_DO_COMPARE:
+    CMP AL, BL
+    JNE COMPARE_CO_NOT_EQUAL
+
+    CMP AL, 0
+    JE COMPARE_CO_EQUAL
+    CMP AL, '$'
+    JE COMPARE_CO_EQUAL
+    CMP BL, 0
+    JE COMPARE_CO_EQUAL
+    CMP BL, '$'
+    JE COMPARE_CO_EQUAL
+
+    INC SI
+    INC DI
+    JMP COMPARE_CO_LOOP
+
+COMPARE_CO_EQUAL:
+    XOR AX, AX
+    JMP COMPARE_CO_END
+
+COMPARE_CO_NOT_EQUAL:
+    MOV AX, 1
+
+COMPARE_CO_END:
+    POP BX
+    RET
+COMPARE_COMPANY_NAMES ENDP
+
+DISPLAY_RACK_HEALTH PROC
+    LEA DX, MSG_RACK_HEALTH
+    CALL PRINT_STRING
+
+    CALL COUNT_ACTIVE_NODES
+    XOR AH, AH
+    CALL PRINT_NUMBER
+
+    LEA DX, MSG_ACTIVE_NODES
+    CALL PRINT_STRING
+
+    CALL COUNT_AVAILABLE_NODES
+    XOR AH, AH
+    CALL PRINT_NUMBER
+
+    LEA DX, MSG_AVAILABLE_NODES
+    CALL PRINT_STRING
+
+    RET
+DISPLAY_RACK_HEALTH ENDP
+
+GET_NODE_STATISTICS PROC
+    PUSH BX
+    PUSH CX
+
+    XOR AL, AL
+    XOR AH, AH
+    MOV BX, 0
+    MOV CX, 10
+
+STATS_LOOP:
+    MOV DL, [SERVER_NODES + BX]
+    CMP DL, STATUS_ONLINE
+    JNE STATS_OFFLINE
+    INC AL
+    JMP STATS_NEXT
+
+STATS_OFFLINE:
+    INC AH
+
+STATS_NEXT:
+    INC BX
+    LOOP STATS_LOOP
+
+    POP CX
+    POP BX
+    RET
+GET_NODE_STATISTICS ENDP
+
+; =============================================================================
+; STACK MODULE
+; =============================================================================
+
+DISPLAY_DECOMMISSION_HISTORY PROC
+    CMP CURRENT_USER_ROLE, 0
+    JE NOT_LOGGED_IN_HISTORY
+
+    MOV AL, ROLE_ADMIN
+    CALL CHECK_ROLE
+    CMP AX, 1
+    JNE NOT_ADMIN_HISTORY
+
+    LEA DX, MSG_HISTORY_MENU
+    CALL PRINT_STRING
+
+    MOV AL, [STACK_PTR]
+    CMP AL, 0
+    JE SHOW_EMPTY_HISTORY
+
+    LEA DX, MSG_HISTORY_HEADER
+    CALL PRINT_STRING
+
+    CALL DISPLAY_STACK_ENTRIES
+    RET
+
+SHOW_EMPTY_HISTORY:
+    LEA DX, MSG_NO_HISTORY
+    CALL PRINT_STRING
+    RET
+
+NOT_LOGGED_IN_HISTORY:
+    LEA DX, MSG_NOT_LOGGED_IN
+    CALL PRINT_STRING
+    RET
+
+NOT_ADMIN_HISTORY:
+    LEA DX, MSG_ADMIN_ONLY
+    CALL PRINT_STRING
+    RET
+
+DISPLAY_DECOMMISSION_HISTORY ENDP
+
+DISPLAY_STACK_ENTRIES PROC
+    PUSH AX
+    PUSH BX
+    PUSH CX
+
+    MOV AL, [STACK_PTR]
+    CMP AL, 0
+    JE DISPLAY_STACK_END
+
+    XOR CX, CX
+    MOV CL, AL
+    XOR BX, BX
+
+DISPLAY_ENTRY_LOOP:
+    MOV BX, CX
+    DEC BX
+
+    MOV DL, [DECOMMISSION_STACK + BX]
+
+    LEA DX, MSG_HISTORY_ENTRY
+    CALL PRINT_STRING
+
+    MOV AL, DL
+    ADD AL, '0'
+    CALL PRINT_CHAR
+
+    LEA DX, MSG_NEWLINE
+    CALL PRINT_STRING
+
+    LOOP DISPLAY_ENTRY_LOOP
+
+DISPLAY_STACK_END:
+    POP CX
+    POP BX
+    POP AX
+    RET
+DISPLAY_STACK_ENTRIES ENDP
+
+; =============================================================================
+; UI MODULE
+; =============================================================================
+
+DISPLAY_MAIN_MENU PROC
+    LEA DX, MSG_MAIN_MENU
+    CALL PRINT_STRING
+    RET
+DISPLAY_MAIN_MENU ENDP
+
+; =============================================================================
+; MAIN PROGRAM
+; =============================================================================
+
+; =============================================================================
+; SYSTEM INITIALIZATION
+; =============================================================================
+
+INIT_SYSTEM PROC
+    MOV CX, 10
+    MOV BX, 0
+
+INIT_NODES:
+    MOV BYTE [SERVER_NODES + BX], 0
+    INC BX
+    LOOP INIT_NODES
+
+    MOV STACK_PTR, 0
+    MOV CURRENT_USER_ROLE, 0
+
+    RET
+INIT_SYSTEM ENDP
+
+; =============================================================================
+; MAIN PROGRAM
+; =============================================================================
+
+MAIN PROC
+
+    MOV AX, @DATA
+    MOV DS, AX
+
+    ; Initialize the system
+    CALL INIT_SYSTEM
+
+    ; Main application loop
+MAIN_LOOP:
+    ; Display welcome menu
+    CALL DISPLAY_MAIN_MENU
+
+    ; Get user choice
+    MOV AH, 0Ah
+    MOV DX, OFFSET INPUT_BUFFER
+    INT 21h
+
+    ; Process menu choice
+    MOV AL, [INPUT_BUFFER + 2]
+    SUB AL, '0'
+
+    CMP AL, 1
+    JE MENU_LOGIN
+    CMP AL, 2
+    JE MENU_ALLOCATE
+    CMP AL, 3
+    JE MENU_SEARCH
+    CMP AL, 4
+    JE MENU_DECOMMISSION
+    CMP AL, 5
+    JE MENU_HISTORY
+    CMP AL, 6
+    JE MENU_EXIT
+
+    LEA DX, MSG_INVALID_CHOICE
+    CALL PRINT_STRING
+    JMP MAIN_LOOP
+
+MENU_LOGIN:
+    CALL AUTH_LOGIN
+    JMP MAIN_LOOP
+
+MENU_ALLOCATE:
+    CALL ALLOCATE_SERVER_NODE
+    JMP MAIN_LOOP
+
+MENU_SEARCH:
+    CALL SEARCH_NODE
+    JMP MAIN_LOOP
+
+MENU_DECOMMISSION:
+    CALL DECOMMISSION_NODE
+    JMP MAIN_LOOP
+
+MENU_HISTORY:
+    CALL DISPLAY_DECOMMISSION_HISTORY
+    JMP MAIN_LOOP
+
+MENU_EXIT:
+    LEA DX, MSG_GOODBYE
+    CALL PRINT_STRING
+    MOV AX, 4C00H
+    INT 21H
+
+MAIN ENDP
+
+END MAIN
