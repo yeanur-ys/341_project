@@ -775,19 +775,23 @@ DISPLAY_STRING_AT_SI ENDP
 PUSH_TO_STACK PROC
     PUSH AX
     PUSH BX
+    PUSH SI
 
     MOV AL, [STACK_PTR]
 
     CMP AL, 100
     JGE STACK_FULL
 
-    MOV BH, 0
-    MOV [DECOMMISSION_STACK + BX], BL
+    XOR AH, AH
+    MOV SI, AX
+    MOV [DECOMMISSION_STACK + SI], BL
 
+    MOV AL, [STACK_PTR]
     INC AL
     MOV [STACK_PTR], AL
 
 STACK_FULL:
+    POP SI
     POP BX
     POP AX
     RET
@@ -1112,12 +1116,20 @@ DISPLAY_ENTRY_LOOP:
     MOV BX, CX
     DEC BX
 
+    ; Use a different register to store the node ID temporarily
+    PUSH DX
     MOV DL, [DECOMMISSION_STACK + BX]
+    MOV BP, DX ; Store in BP safely, or we can just push it and pop after LEA DX
+    POP DX
+    
+    ; No, simpler:
+    MOV AL, [DECOMMISSION_STACK + BX]
+    PUSH AX
 
     LEA DX, MSG_HISTORY_ENTRY
     CALL PRINT_STRING
 
-    MOV AL, DL
+    POP AX
     ADD AL, '0'
     CALL PRINT_CHAR
 
