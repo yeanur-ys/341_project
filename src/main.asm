@@ -59,8 +59,9 @@ MSG_MAIN_MENU DB 0Dh, 0Ah, "======================================", 0Dh, 0Ah
               DB "3. Search Node", 0Dh, 0Ah
               DB "4. Decommission Node (Billing)", 0Dh, 0Ah
               DB "5. Decommission History", 0Dh, 0Ah
-              DB "6. Exit", 0Dh, 0Ah
-              DB "Select option (1-6): $"
+              DB "6. Logout", 0Dh, 0Ah
+              DB "7. Exit", 0Dh, 0Ah
+              DB "Select option (1-7): $"
 
 MSG_LOGIN_WELCOME DB 0Dh, 0Ah, "=== LOGIN ===", 0Dh, 0Ah, "$"
 MSG_ENTER_USERNAME DB "Enter username: $"
@@ -1194,6 +1195,8 @@ MAIN_LOOP:
     CMP AL, 5
     JE MENU_HISTORY
     CMP AL, 6
+    JE MENU_LOGOUT
+    CMP AL, 7
     JE MENU_EXIT
 
     LEA DX, MSG_INVALID_CHOICE
@@ -1218,6 +1221,10 @@ MENU_DECOMMISSION:
 
 MENU_HISTORY:
     CALL DISPLAY_DECOMMISSION_HISTORY
+    JMP MAIN_LOOP
+
+MENU_LOGOUT:
+    CALL LOGOUT
     JMP MAIN_LOOP
 
 MENU_EXIT:
